@@ -15,7 +15,8 @@ try:
 except ImportError:
     SetTrace = sys.settrace
 
-from . import _ast_utils, _source_utils, _finder, _dumper
+from . import _ast_utils, _dumper, _source_utils, _scope
+from ._scope import Scope
 
 
 class CallInfo:
@@ -23,7 +24,7 @@ class CallInfo:
 
     Contains the following information:
         - the function from which that call was made
-        - the scope (see :class:`_finder.Scope`)
+        - the scope (see :class:`_scope.Scope`)
 
     Example:
 
@@ -53,15 +54,15 @@ class CallInfo:
         # TODO: is it redundant to keep the function? (as it is contained in the scope?)
         self.function: str = caller_frameinfo.function
 
-        self.scope: _finder.Scope = self._determine_scope(caller_frameinfo, drop_n, ignore_scope)
+        self.scope: Scope = self._determine_scope(caller_frameinfo, drop_n, ignore_scope)
 
     def _determine_scope(self, caller_frameinfo: inspect.FrameInfo,
-                         drop_n: int, ignore_scope: bool) -> _finder.Scope:
+                         drop_n: int, ignore_scope: bool) -> Scope:
         """Determine the scope of the caller frame. """
         module = _module(caller_frameinfo.frame)
 
         if self.function == '<module>' or ignore_scope:
-            return _finder.Scope(module, inspect.getsource(caller_frameinfo.frame), [])
+            return Scope(module, inspect.getsource(caller_frameinfo.frame), [])
 
         return _get_scope_from_frame(caller_frameinfo.frame, drop_n)
 
@@ -88,32 +89,32 @@ _EXCLUDED_MODULES = ['pytest', 'pluggy', '_pytest']
 
 
 def _get_scope_from_frame(frame, drop_n):
-    """Get the :class:`~_finder.Scope` from the frame object *frame*. """
+    """Get the :class:`~Scope` from the frame object *frame*. """
     module = _module(frame)
     # don't dive deeper for excluded modules
     parent = _parent_frame(frame)
     if any(module.__name__.startswith(excluded_module) for excluded_module in _EXCLUDED_MODULES):
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
     # don't dive deeper if parent is None
     if parent is None:
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
     # don't dive deeper after main
     if module.__name__ == '__main__' and _module(parent) != module:
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
     # don't dive deeper if not a call
     if frame.f_code.co_name == '<module>':
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
 
     try:
         call_source, locs = get_segment_from_frame(parent, 'call', return_locs=True)
     except (RuntimeError, FileNotFoundError, AttributeError, OSError):
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
     try:
         definition_source = _source_utils.get_source(frame.f_code.co_filename)
     except FileNotFoundError:
-        return _finder.Scope.toplevel(module)
+        return Scope.toplevel(module)
     calling_scope = _get_scope_from_frame(parent, 0)
-    scope = _finder.Scope.from_source(definition_source, frame.f_lineno,
+    scope = Scope.from_source(definition_source, frame.f_lineno,
                                         call_source, module, drop_n,
                                         calling_scope, frame, locs)
     # TODO: fix this and readd (problem with transforms initialized in __init__)
@@ -241,9 +242,12 @@ def caller_module() -> types.ModuleType:
     return _module(outer_caller_frameinfo(calling_module_name).frame)
 
 
-def caller_frame() -> types.FrameType:
+def caller_frame(n_back=1) -> types.FrameType:
     """Get the callers frame. """
-    calling_module_name = inspect.currentframe().f_back.f_globals['__name__']
+    frame = inspect.currentframe()
+    for _ in range(n_back):
+        frame = frame.f_back
+    calling_module_name = frame.f_globals['__name__']
     return outer_caller_frameinfo(calling_module_name).frame
 
 
@@ -396,7 +400,7 @@ def get_call_signature(calling_frame):
         - value of **kwargs (as a string)
     """
     call_source = get_segment_from_frame(calling_frame, 'call')
-    return _finder._get_call_signature(call_source)
+    return _scope._get_call_signature(call_source)
 
 
 def get_my_call_signature():
@@ -409,7 +413,7 @@ def get_my_call_signature():
         - value of *args (as a string)
         - value of **kwargs (as a string)
 
-    (see also :func:`_finder._get_call_signature`).
+    (see also :func:`_scope._get_call_signature`).
 
     Example:
 
@@ -418,3 +422,10 @@ def get_my_call_signature():
     (['1', '2'], {'b': '"hello"', 'c': '123'}, '[1, 2]', "{'1': 1, '2': 2}")
     """
     return get_call_signature(inspect.currentframe().f_back.f_back)
+
+
+def get_argument_assignments(*args, **kwargs):
+    frame = caller_frame(2)
+    signature = get_call_signature(frame)
+    return _scope.Signature(*args, **kwargs, ignore_extra_kwargs=True) \
+        .get_call_assignments(*signature)

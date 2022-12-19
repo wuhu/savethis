@@ -1,11 +1,12 @@
 import ast
 from collections import defaultdict
 from dataclasses import dataclass, field
+import sys
 
 from types import ModuleType
-from typing import Optional
+from typing import List, Optional, Tuple
 
-from . import _ast_utils
+from . import _ast_utils, _source_utils
 
 
 @dataclass
@@ -17,6 +18,7 @@ class Signature:
     kwonly_defaults: dict = field(default_factory=lambda: {})
     vararg: Optional[str] = None
     kwarg: Optional[str] = None
+    ignore_extra_kwargs: bool = False
 
     def remove_fist(self):
         '''Remove the fist positional argument. '''
@@ -30,7 +32,7 @@ class Signature:
         return self.pos_only_argnames + self.argnames
 
     def get_call_assignments(self, pos_args, keyword_args, star_args=None, star_kwargs=None,
-                             dump_kwargs=True):
+                             dump_kwargs=True, ignore_extra_kwargs=False):
         """Given a call signature, return the assignmentes to this function signature.
 
         :param pos_args: Positional args.
@@ -38,6 +40,8 @@ class Signature:
         :param star_args: Value of *args.
         :param star_kwargs: Value of **kwargs.
         :param dump_kwargs: If *True*, return kwargs as a dumped string, else as a dict.
+        :param ignore_extra_kwargs: If *True*, ignore extra keyword arguments, else raise an
+            exception.
         """
         res = {}
         for name, val in self.kwonly_defaults.items():
@@ -62,8 +66,10 @@ class Signature:
                 kwargs[name] = val
 
         if kwargs and not set(kwargs) == {None}:
-            assert self.kwarg is not None, 'Extra keyword args given, but no **kwarg present.'
-            if dump_kwargs:
+            if self.kwarg is None:
+                if not self.ignore_extra_kwargs:
+                    raise ValueError('Extra keyword args given, but no **kwarg present.')
+            elif dump_kwargs:
                 res[self.kwarg] = '{' + ', '.join(f"'{k}': {v}" for k, v in kwargs.items()) + '}'
             else:
                 res[self.kwarg] = kwargs
@@ -448,3 +454,31 @@ class _SetAttribute(ast.NodeVisitor):  # TODO: use of this seems dubious
     def generic_visit(self, node):
         setattr(node, self.attr, self.value)
         super().generic_visit(node)
+
+
+def _find_branch(tree, lineno, source):
+    """Find the branch of the ast tree *tree* containing *lineno*. """
+
+    if hasattr(tree, 'lineno'):
+        position = _ast_utils.get_position(source, tree)
+        start, end = position.lineno, position.end_lineno
+        # we're outside
+        if not start <= lineno <= end:
+            return False
+    else:
+        # this is for the case of nodes that have no lineno, for these we need to go deeper
+        start = end = '?'
+
+    child_nodes = list(ast.iter_child_nodes(tree))
+    if not child_nodes and start != '?':
+        return [tree]
+
+    for child_node in child_nodes:
+        res = _find_branch(child_node, lineno, source)
+        if res:
+            return [tree] + res
+
+    if start == '?':
+        return False
+
+    return [tree]

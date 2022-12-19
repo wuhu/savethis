@@ -16,6 +16,37 @@ SCOPE = Scope.toplevel(sys.modules[__name__])
 
 
 class Serializer:
+    store: List = []
+    i: int = 0
+
+    def __init__(self, varname=None, store=True):
+        self.index = Serializer.i
+        Serializer.i += 1
+        self._varname = varname
+        if store:
+            self.store.append(self)
+
+    def save(self, path: Path):
+        raise NotImplementedError
+
+    @classmethod
+    def save_all(cls, codegraph, path):
+        """Save all values. """
+        for codenode in list(codegraph.values()):
+            for serializer in cls.store:
+                if serializer.varname in codenode.source:
+                    loader_graph = serializer.save(path)
+                    codegraph.update(loader_graph)
+
+    @property
+    def varname(self):
+        """The varname to store in the dumped code. """
+        if self._varname is not None:
+            return self._varname
+        return f'SAVETHIS_VALUE_{self.index}'
+
+
+class SimpleSerializer(Serializer):
     # TODO: explain better
     """Serializer base class.
 
@@ -26,15 +57,10 @@ class Serializer:
     :param module: The module the serializer functions are defined in. Optional, default is to
         use the calling module.
     """
-
-    store: List = []
-    i: int = 0
-
     def __init__(self, val: Any, save_function: Callable, load_function: Callable,
-                 file_suffix: Optional[str] = None, module: Optional[ModuleType] = None):
-        self.index = Serializer.i
-        Serializer.i += 1
-        self.store.append(self)
+                 file_suffix: Optional[str] = None, varname: Optional[str] = None,
+                 module: Optional[ModuleType] = None, store: bool = True, **_):  # TODO: why not get the module from the functions??
+        super().__init__(varname, store)
         self.val = val
         self.save_function = save_function
         self.file_suffix = file_suffix
@@ -45,7 +71,6 @@ class Serializer:
             _dumper.CodeGraph().build(ScopedName(load_function.__name__,
                                                  Scope.toplevel(load_function.__module__)))
         self.load_name = load_function.__name__
-        super().__init__()
 
     def save(self, path: Path):
         """Save the serializer's value to *path*.
@@ -85,43 +110,24 @@ class Serializer:
                           name=ScopedName('pathlib', SCOPE, pos='injected'))}
         )
 
-    @property
-    def varname(self):
-        """The varname to store in the dumped code. """
-        return f'SAVETHIS_VALUE_{self.index}'
 
-    @classmethod
-    def save_all(cls, codegraph, path):
-        """Save all values. """
-        for codenode in list(codegraph.values()):
-            for serializer in cls.store:
-                if serializer.varname in codenode.source:
-                    loader_graph = serializer.save(path)
-                    codegraph.update(loader_graph)
+class NullSerializer(Serializer):
+    """A Serializer that does nothing. """
+    def __init__(self, val, *, evaluable_repr, scope, varname=None, store=True, **_):
+        super().__init__(varname, store)
+        self.code_graph = _dumper.CodeGraph()
+        globals_, scoped_name = self.code_graph.add_startnodes(evaluable_repr, self.varname, scope)
+        self.code_graph.build(globals_)
 
-
-def save_json(val, path):
-    """Saver for json. """
-    with open(path, 'w') as f:
-        json.dump(val, f)
-
-
-def load_json(path):
-    """Loader for json. """
-    with open(path) as f:
-        return json.load(f)
-
-
-def json_serializer(val):
-    """Create a json serializer for *val*. """
-    return Serializer(val, save_json, load_json, '.json', sys.modules[__name__])
+    def save(self, path):
+        return self.code_graph
 
 
 def _serialize(val, serializer=None):
     if serializer is not None:
         return Serializer(val, *serializer).varname
     if hasattr(val, '__len__') and len(val) > 10:
-        return json_serializer(val).varname
+        return serializers.json_serializer(val).varname
     return repr(val)
 
 
@@ -132,5 +138,5 @@ def value(val, serializer=None):
     _call, locs = _inspect_utils.get_segment_from_frame(caller_frameinfo.frame, 'call', True)
     source = _source_utils.get_source(caller_frameinfo.filename)
     _source_utils.put_into_cache(caller_frameinfo.filename, _source_utils.original(source),
-                             _serialize(val, serializer=serializer), *locs)
+                                 _serialize(val, serializer=serializer), *locs)
     return val

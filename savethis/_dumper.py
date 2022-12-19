@@ -1034,6 +1034,24 @@ class CodeGraph(dict):
 
         return self
 
+    def add_startnodes(self, evaluable_repr, name: Optional[str], scope: Scope) -> Set:
+        """Build the start-:class:`CodeNode` objects - the node with the source needed to create
+        *self* as *name* (in the scope where *self* was originally created).
+
+        Returns a set of dependencies (scoped names the start-node depends on).
+        """
+        start_source = f'{name or "_pd_dummy"} = {evaluable_repr}'
+        start = CodeNode.from_source(start_source, scope, name=name or "__st_dummy")
+
+        # if name is given, add the node to the CodeGraph, otherwise only use the dependencies
+        if name is not None:
+            scoped_name = ScopedName(name, scope)
+            self[scoped_name] = start
+        else:
+            scoped_name = None
+
+        return list(start.globals_), scoped_name
+
     def print(self):
         """Print the graph (for debugging). """
         for k, v in self.items():

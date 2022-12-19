@@ -32,6 +32,7 @@ from textwrap import dedent
 from typing import List, Tuple, Optional
 
 from . import _ast_utils, _source_utils
+from ._scope import Scope, ScopedName, _find_branch
 
 
 class _ThingFinder(ast.NodeVisitor):
@@ -474,34 +475,6 @@ def find_in_module(var_name: str, module) -> Tuple[str, ast.AST, str]:
     """
     scoped_name = ScopedName(var_name, None)
     return find_scopedname_in_module(scoped_name, module)
-
-
-def _find_branch(tree, lineno, source):
-    """Find the branch of the ast tree *tree* containing *lineno*. """
-
-    if hasattr(tree, 'lineno'):
-        position = _ast_utils.get_position(source, tree)
-        start, end = position.lineno, position.end_lineno
-        # we're outside
-        if not start <= lineno <= end:
-            return False
-    else:
-        # this is for the case of nodes that have no lineno, for these we need to go deeper
-        start = end = '?'
-
-    child_nodes = list(ast.iter_child_nodes(tree))
-    if not child_nodes and start != '?':
-        return [tree]
-
-    for child_node in child_nodes:
-        res = _find_branch(child_node, lineno, source)
-        if res:
-            return [tree] + res
-
-    if start == '?':
-        return False
-
-    return [tree]
 
 
 def find_scopedname_in_ipython(scoped_name: ScopedName) ->Tuple[str, ast.AST, str]:
