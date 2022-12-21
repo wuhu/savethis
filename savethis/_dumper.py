@@ -651,7 +651,9 @@ class _MethodFinder(ast.NodeVisitor):
 
 
 def _filter_builtins(names):
-    return {name for name in names if name.toplevel_name not in builtins.__dict__}
+    dunders = ['__name__', '__doc__', '__file__', '__annotations__']
+    builtin_names = list(builtins.__dict__)
+    return {name for name in names if name.toplevel_name not in dunders + builtin_names}
 
 
 def _find_globals_in_classdef(node: ast.ClassDef, filter_builtins: bool = True):
