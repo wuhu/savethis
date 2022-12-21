@@ -843,6 +843,27 @@ class CodeNode:
         )
 
 
+def name_from_ast_node(node):
+    """Infer a CodeNode name from an ast node. """
+    if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        assert len(node.names) == 1, 'Unique name cannot be determined.'
+        name = node.names[0]
+        if name.asname is None:
+            return name.name
+        return name.asname
+    if isinstance(node, ast.Assign):
+        assert len(node.targets) == 1, 'Unique name cannot be determined.'
+        target = node.targets[0]
+        assert isinstance(target, ast.Name), 'Unique name cannot be determined.'
+        return target.id
+    if isinstance(node, ast.AnnAssign):
+        assert isinstance(node.target, ast.Name), 'Unique name cannot be determined.'
+        return node.target.id
+    raise ValueError('Wrong node type.')
+
+
 def _sort(unscoped_graph):
     top = _topsort({k: v.globals_ for k, v in unscoped_graph.items()})
 
