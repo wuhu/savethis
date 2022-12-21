@@ -52,7 +52,7 @@ class Finder(ast.NodeVisitor):
         nodes = self.find(_ast_utils.cached_parse(source))
         return [
             (
-                _ast_utils.get_source_segment(source, node),
+                ast.get_source_segment(source, node),
                 _ast_utils.get_position(source, node)
             )
             for node in nodes
@@ -472,7 +472,7 @@ class _Renamer(ast.NodeVisitor):
             self.visit(child)
 
     def visit_Attribute(self, node):
-        name = _ast_utils.get_source_segment(self.source, node)
+        name = ast.get_source_segment(self.source, node)
         if not self.is_candidate(name.split('.', 1)[0]):
             return
 
@@ -513,7 +513,7 @@ class _Renamer(ast.NodeVisitor):
             and self.renaming_function(node.name, node)
         )
         if new_name:
-            source_segment = _ast_utils.get_source_segment(self.source, node)
+            source_segment = ast.get_source_segment(self.source, node)
             full_position = _ast_utils.get_position(self.source, node)
             span = re.search(rf'def ({node.name})\(.*\):.*', source_segment).span(1)
             position = _ast_utils.span_to_pos(span, source_segment)
@@ -559,7 +559,7 @@ class _Renamer(ast.NodeVisitor):
             and self.renaming_function(node.name, node)
         )
         if new_name:
-            source_segment = _ast_utils.get_source_segment(self.source, node)
+            source_segment = ast.get_source_segment(self.source, node)
             full_position = _ast_utils.get_position(self.source, node)
             span = re.search(rf'class ({node.name}).*:.*', source_segment).span(1)
             position = _ast_utils.span_to_pos(span, source_segment)
