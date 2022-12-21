@@ -701,7 +701,7 @@ def find_globals(node: ast.AST, filter_builtins: bool = True) -> Set[Tuple[str, 
 
 def find_codenode(name: ScopedName, full_dump_module_names=None) -> "CodeNode":
     """Find the :class:`CodeNode` corresponding to a :class:`ScopedName` *name*. """
-    (source, node), found_name = find_in_scope(name)
+    source, node, found_name = find_in_scope(name)
 
     module_name = None
     if full_dump_module_names:
@@ -785,7 +785,6 @@ def _topsort(graph: dict) -> List[set]:
     return levels
 
 
-@dataclass
 class CodeNode:
     """A node in a :class:`CodeGraph`.
 
@@ -796,16 +795,26 @@ class CodeNode:
     - (optionally) a *scope*: The module and function scope the `CodeNode` lives in.
     - (optionally) an *ast_node*: An `ast.AST` object representing the code.
     """
-    source: str
-    globals_: set
-    name: ScopedName
-    ast_node: Optional[ast.AST] = None
+
+    def __init__(self, source, globals_=None, name=None, ast_node=None, scope=None, pos=None):
+        self.source = source
+        if globals_ is None:
+            globals_ = set()
+        self.globals_ = globals_
+        if ast_node is None:
+            ast_node = ast.parse(source).body[0]
+        self.ast_node = ast_node
+        if name is None:
+            name = ScopedName(name_from_ast_node(ast_node), scope, pos)
+        self.name = name
 
     @classmethod
-    def from_source(cls, source, scope, name):
+    def from_source(cls, source, scope, name=None, pos=(0, 0)):
         """Build a `CodeNode` from a source string. """
-        scoped_name = ScopedName(name, scope, pos=(0, 0))
-        node = _ast_utils.ast.parse(source).body[0]
+        node = ast.parse(source).body[0]
+        if name is None:
+            name = name_from_ast_node(node)
+        scoped_name = ScopedName(name, scope, pos=pos)
         globals_ = find_globals(node)
         for var in globals_:
             if var.scope.is_empty():
