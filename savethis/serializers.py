@@ -25,9 +25,10 @@ def load_json(path):
         return json.load(f)
 
 
-def json_serializer(val, varname=None, **_):
+def json_serializer(val, varname=None, store=True, **_):
     """Create a json serializer for *val*. """
-    return SimpleSerializer(val, save_json, load_json, '.json', varname, sys.modules[__name__])
+    return SimpleSerializer(val, save_json, load_json, '.json', varname, sys.modules[__name__],
+                            store=store)
 
 
 class PytorchSerializer(Serializer):
@@ -43,21 +44,21 @@ class PytorchSerializer(Serializer):
         path = pathlib.Path(str(path) + f'/torchmodule_{self.i}.pt')
         torch.save(self.val.state_dict(), path)
 
-        complete_path = f"pathlib.Path(__file__).parent / '{path.name}'"
+        complete_path = self.complete_path(path.name)
 
-        return _dumper.CodeGraph(
-            {**self.code_graph,
-             _scope.ScopedName(self.varname + '__load', _scope.Scope.empty(), pos='injected'):  # TODO: use from_source?
-                 _dumper.CodeNode(source=f'{self.varname}.load_state_dict({complete_path})',
-                          globals_={_scope.ScopedName(self.varname, self.scope)},
-                          ast_node=ast.parse(f'{self.varname}.load_state_dict({complete_path})').body[0],
-                          name=_scope.ScopedName(self.varname + '__load', self.scope, pos='injected')),
-             _scope.ScopedName('pathlib', SCOPE, pos='injected'):
-                 _dumper.CodeNode(source='import pathlib',
-                          globals_=set(),
-                          ast_node=ast.parse('import pathlib').body[0],
-                          name=_scope.ScopedName('pathlib', SCOPE, pos='injected'))}
+        code_graph = _dumper.CodeGraph(self.code_graph)
+        code_graph.inject(
+             _dumper.CodeNode(source=f'{self.varname}.load_state_dict({complete_path})',
+                              globals_={_scope.ScopedName(self.varname, self.scope)},
+                              name=_scope.ScopedName(self.varname + '__load', self.scope, pos='injected')),
         )
+        code_graph.inject(
+             _dumper.CodeNode(source='import pathlib',
+                              globals_=set(),
+                              scope='SCOPE',
+                              pos='injected')
+        )
+        return code_graph
 
 
 class PickleSerializer(Serializer):
@@ -76,24 +77,25 @@ class PickleSerializer(Serializer):
         with open(path, 'wb') as f:
             pickle.dump(self.val, f)
 
-        complete_path = f"pathlib.Path(__file__).parent / '{path.name}'"
+        complete_path = self.complete_path(path.name)
 
-        return _dumper.CodeGraph(
-            {**self.code_graph,
-             _scope.ScopedName(self.varname + '__load', _scope.Scope.empty(), pos='injected'):  # TODO: use from_source?
-                 _dumper.CodeNode(source=f"with open({complete_path}, 'rb') as f:\n    {self.varname} = pickle.load(f)",
-                          globals_={_scope.ScopedName(self.class_name, self.scope),
-                                    _scope.ScopedName('pickle', SCOPE, pos='injected')},
-                          ast_node=ast.parse(f"with open({complete_path}, 'rb') as f:\n    {self.varname} = pickle.load(f)").body[0],
-                          name=_scope.ScopedName(self.varname + '__load', self.scope, pos='injected')),
-             _scope.ScopedName('pathlib', SCOPE, pos='injected'):
-                 _dumper.CodeNode(source='import pathlib',
-                          globals_=set(),
-                          ast_node=ast.parse('import pathlib').body[0],
-                          name=_scope.ScopedName('pathlib', SCOPE, pos='injected')),
-             _scope.ScopedName('pickle', SCOPE, pos='injected'):
-                 _dumper.CodeNode(source='import pickle',
-                          globals_=set(),
-                          ast_node=ast.parse('import pickle').body[0],
-                          name=_scope.ScopedName('pickle', SCOPE, pos='injected'))}
+        code_graph = _dumper.CodeGraph(self.code_graph)
+        code_graph.inject(
+             _dumper.CodeNode(source=f"with open({complete_path}, 'rb') as f:\n    {self.varname} = pickle.load(f)",
+                              globals_={_scope.ScopedName(self.class_name, self.scope),
+                                        _scope.ScopedName('pickle', SCOPE, pos='injected')},
+                              name=_scope.ScopedName(self.varname + '__load', self.scope, pos='injected')),
         )
+        code_graph.inject(
+             _dumper.CodeNode(source='import pickle',
+                              globals_=set(),
+                              scope=SCOPE,
+                              pos='injected')
+        )
+        code_graph.inject(
+             _dumper.CodeNode(source='import pathlib',
+                              globals_=set(),
+                              scope='SCOPE',
+                              pos='injected')
+        )
+        return code_graph

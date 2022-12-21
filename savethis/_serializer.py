@@ -23,6 +23,7 @@ class Serializer:
         self.index = Serializer.i
         Serializer.i += 1
         self._varname = varname
+        self.code_graph = _dumper.CodeGraph()
         if store:
             self.store.append(self)
 
@@ -37,6 +38,17 @@ class Serializer:
                 if serializer.varname in codenode.source:
                     loader_graph = serializer.save(path)
                     codegraph.update(loader_graph)
+
+    def complete_path(self, filename):
+        if isinstance(filename, (str, Path)):
+            return f"pathlib.Path(__file__).parent / '{filename}'"
+        elif isinstance(filename, Iterable):
+            return ('[pathlib.Path(__file__).parent / filename for filename in ['
+                    + ', '.join(f"'{fn}'" for fn in filename)
+                    + ']]')
+        else:
+            raise ValueError('The save function must return a filename, a list of filenames or '
+                             'nothing.')
 
     @property
     def varname(self):
@@ -67,9 +79,8 @@ class SimpleSerializer(Serializer):
         if module is None:
             module = _inspect_utils.caller_module()
         self.scope = Scope.toplevel(module)
-        self.load_codegraph = \
-            _dumper.CodeGraph().build(ScopedName(load_function.__name__,
-                                                 Scope.toplevel(load_function.__module__)))
+        self.code_graph.build(ScopedName(load_function.__name__,
+                                         Scope.toplevel(load_function.__module__)))
         self.load_name = load_function.__name__
 
     def save(self, path: Path):
@@ -86,36 +97,24 @@ class SimpleSerializer(Serializer):
             assert self.file_suffix is not None, ('if no file file_suffix is passed to *value*, '
                                                   'the *save*-function must return a filename')
             filename = path.name
-        if isinstance(filename, (str, Path)):
-            complete_path = f"pathlib.Path(__file__).parent / '{filename}'"
-        elif isinstance(filename, Iterable):
-            complete_path = ('[pathlib.Path(__file__).parent / filename for filename in ['
-                             + ', '.join(f"'{fn}'"
-                                         for fn in filename)
-                             + ']]')
-        else:
-            raise ValueError('The save function must return a filename, a list of filenames or '
-                             'nothing.')
-        return CodeGraph(
-            {**self.load_codegraph,
-             ScopedName(self.varname, Scope.empty(), pos='injected'):
-                 CodeNode(source=f'{self.varname} = {self.load_name}({complete_path})',
-                          globals_={ScopedName(self.load_name, self.scope)},
-                          ast_node=ast.parse(f'{self.varname} = {self.load_name}({complete_path})').body[0],
-                          name=ScopedName(self.varname, self.scope, pos='injected')),
-             ScopedName('pathlib', SCOPE, pos='injected'):
-                 CodeNode(source='import pathlib',
-                          globals_=set(),
-                          ast_node=ast.parse('import pathlib').body[0],
-                          name=ScopedName('pathlib', SCOPE, pos='injected'))}
+
+        complete_path = self.complete_path(filename)
+        code_graph = CodeGraph(self.code_graph)
+        code_graph.inject(
+             CodeNode(source=f'{self.varname} = {self.load_name}({complete_path})',
+                      globals_={ScopedName(self.load_name, self.scope)},
+                      scope=self.scope, pos='injected'),
         )
+        code_graph.inject(
+             CodeNode(source='import pathlib', scope=SCOPE, pos='injected')
+        )
+        return code_graph
 
 
 class NullSerializer(Serializer):
     """A Serializer that does nothing. """
     def __init__(self, val, *, evaluable_repr, scope, varname=None, store=True, **_):
         super().__init__(varname, store)
-        self.code_graph = _dumper.CodeGraph()
         globals_, scoped_name = self.code_graph.add_startnodes(evaluable_repr, self.varname, scope)
         self.code_graph.build(globals_)
 

@@ -1029,7 +1029,7 @@ class CodeGraph(dict):
     def real_names(self):
         return {v.name: v for v in self.values()}
 
-    def from_source(self, target: str, scope: Optional[Scope] = None, name='__out'):
+    def build_from_source(self, target: str, scope: Optional[Scope] = None, name='__out'):
         if scope is None:
             scope = Scope.toplevel('__main__')
         start = CodeNode.from_source(target, scope, name)
@@ -1043,8 +1043,6 @@ class CodeGraph(dict):
 
         The name(s) will be searched for in its (their) scope.
         """
-        done = set()
-
         if isinstance(target, list):
             todo = set(target)
         else:
@@ -1054,7 +1052,7 @@ class CodeGraph(dict):
             # we know this already - go on
             next_name = todo.pop()
 
-            if next_name in done:
+            if next_name in self:
                 continue
 
             # find how next_var came into being
@@ -1062,7 +1060,6 @@ class CodeGraph(dict):
             self[next_name] = next_codenode
 
             todo.update(next_codenode.globals_)
-            done.add(next_name)
 
         return self
 
@@ -1083,6 +1080,16 @@ class CodeGraph(dict):
             scoped_name = None
 
         return list(start.globals_), scoped_name
+    
+    def inject(self, code_node, key_name=None, key_scope=None, key_pos=None):
+        key = code_node.name.copy()
+        if key_name is not None:
+            key.name = key_name
+        if key_scope is not None:
+            key.scope = key_scope
+        if key_pos is not None:
+            key.pos = key_pos
+        self[key] = code_node
 
     def print(self):
         """Print the graph (for debugging). """

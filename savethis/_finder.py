@@ -1,6 +1,4 @@
 # pylint: disable=invalid-name
-# TODO: change name?
-# TODO: remove scope etc (seems like that belongs somewhere else)
 """Module for symbolically finding python entities in python source code given their name.
 
 A thing in python can get its name in various ways:
@@ -29,7 +27,7 @@ import ast
 from math import inf
 import sys
 from textwrap import dedent
-from typing import List, Tuple, Optional
+from typing import Optional, Tuple
 
 from . import _ast_utils, _source_utils
 from ._scope import Scope, ScopedName, _find_branch
@@ -83,7 +81,7 @@ class _ThingFinder(ast.NodeVisitor):
 
     def deparse(self) -> str:
         """Get the source snipped corresponding to the found node. """
-        return _ast_utils.get_source_segment(self.source, self._result)
+        return ast.get_source_segment(self.source, self._result)
 
     def node(self) -> ast.AST:
         """Get the found node. """
@@ -123,18 +121,18 @@ class _FunctionDefFinder(_ThingFinder):
 
     def deparse(self):
         res = ''
-        res = _ast_utils.get_source_segment(self.source, self._result)
+        res = ast.get_source_segment(self.source, self._result)
         # for py 3.8+, the decorators are not included, we need to add them
         if not res.lstrip().startswith('@'):
             for decorator in self._result.decorator_list[::-1]:
-                res = f'@{_ast_utils.get_source_segment(self.source, decorator)}\n' + res
+                res = f'@{ast.get_source_segment(self.source, decorator)}\n' + res
         return _fix_indent(res)
 
 
 def _fix_indent(source):  # TODO a@lf1.io: kind of dubious - is there a better way?
     """Fix the indentation of functions that are wrongly indented.
 
-    This can happen with :func:`_ast_utils.get_source_segment`.
+    This can happen with :func:`ast.get_source_segment`.
     """
     lines = source.lstrip().split('\n')
     res = []
@@ -183,12 +181,12 @@ class _ClassDefFinder(_ThingFinder):
 
     def deparse(self):
         res = ''
-        res = _ast_utils.get_source_segment(self.source, self._result)
+        res = ast.get_source_segment(self.source, self._result)
         res = _fix_indent(res)
         # for py 3.8+, the decorators are not included, we need to add them
         if not res.lstrip().startswith('@'):
             for decorator in self._result.decorator_list[::-1]:
-                res = f'@{_ast_utils.get_source_segment(self.source, decorator)}\n' + res
+                res = f'@{ast.get_source_segment(self.source, decorator)}\n' + res
         return res
 
 
@@ -339,7 +337,7 @@ class _AssignFinder(_ThingFinder):
 
     def deparse(self):
         source = getattr(self._result, '_source', self.source)
-        return _ast_utils.get_source_segment(source, self._result)
+        return ast.get_source_segment(source, self._result)
 
 
 def statements_before(source, statements, pos):
@@ -358,39 +356,29 @@ def find_in_scope(scoped_name: ScopedName):
     *scoped_name.name* in the scope *scoped_name.scope*.
 
     :param scoped_name: Name (with scope) of the variable to look for.
-    :return: Tuple as ((source, node), scope, name), where
+    :return: Tuple as (source, node, name), where
         * source: String representation of piece of code.
         * node: Ast node for the code.
-        * scope: Scope of the code.
-        * name: Name of variable (str).
+        * name: Name of variable (ScopedName).
 
     """
-    scope = scoped_name.scope
     searched_name = scoped_name.copy()
-    for _scopename, tree in scope.scopelist:
+    # search in scope hierarchy
+    for _scopename, tree in searched_name.scope.scopelist:
         try:
-            res = find_scopedname_in_source(searched_name, source=searched_name.scope.def_source,
-                                            tree=tree)
-            source, node, name = res
-            if getattr(node, '_globalscope', False):
-                name.scope = Scope.empty()
-            else:
-                name.scope = scope
-            return (source, node), name
+            return find_scopedname_in_source(searched_name, 
+                                             source=searched_name.scope.def_source,
+                                             tree=tree)
         except NameNotFound:
-            scope = scope.up()
-            searched_name.pos = None
-            searched_name.cell_no = None
+            searched_name.up()
             continue
-    if scope.module is None:
-        raise NameNotFound(format_scoped_name_not_found(scoped_name))
-    source, node, name = find_scopedname(searched_name)
-    if getattr(node, '_globalscope', False):
-        scope = Scope.empty()
-    else:
-        scope = getattr(node, '_scope', scope.global_())
-    name.scope = scope
-    return (source, node), name
+    if searched_name.scope.module is not None:
+        try:
+            return find_scopedname(searched_name)
+        except NameNotFound:
+            pass
+    searched_name.scope = Scope.empty()
+    return find_scopedname_in_source(searched_name, _source_utils.injected.src)
 
 
 def replace_star_imports(tree: ast.Module):
@@ -437,11 +425,16 @@ def find_scopedname_in_source(scoped_name: ScopedName, source, tree=None) -> Tup
                 if finder.found_something():
                     node = finder.node()
                     pos = _ast_utils.get_position(source, node)
+                    if getattr(node, '_globalscope', False):
+                        scope = Scope.empty()
+                    else:
+                        scope = getattr(node, '_scope', scoped_name.scope)
                     return (
                         finder.deparse(),
                         node,
-                        ScopedName(var_name, scoped_name.scope, (pos.lineno, pos.col_offset))
+                        ScopedName(var_name, scope, (pos.lineno, pos.col_offset))
                     )
+
     raise NameNotFound(
         format_scoped_name_not_found(scoped_name)
     )
@@ -586,7 +579,7 @@ def split_call(call_source):
     ('f', '1, 2, 3')
     """
     node = ast.parse(call_source).body[0].value
-    call = _ast_utils.get_source_segment(call_source, node.func)
+    call = ast.get_source_segment(call_source, node.func)
     if not node.args and not node.keywords:
         return call, ''
     all_args = node.args + [x.value for x in node.keywords]

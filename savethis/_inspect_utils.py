@@ -117,8 +117,7 @@ def _get_scope_from_frame(frame, drop_n):
     scope = Scope.from_source(definition_source, frame.f_lineno,
                                         call_source, module, drop_n,
                                         calling_scope, frame, locs)
-    # TODO: fix this and readd (problem with transforms initialized in __init__)
-    #assert len(scope) <= 1, 'scope longer than 1 currently not supported'
+    assert len(scope) <= 1, 'scope longer than 1 currently not supported'
     return scope
 
 

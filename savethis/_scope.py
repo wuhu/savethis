@@ -93,12 +93,12 @@ def _parse_def_args(args, source):
         pos_only_argnames = []
 
     defaults = {
-        name: _ast_utils.get_source_segment(source, val)
+        name: ast.get_source_segment(source, val)
         for name, val in zip(argnames[::-1], args.defaults[::-1])
     }
 
     kwonly_defaults = {
-        _ast_utils.get_source_segment(source, name): _ast_utils.get_source_segment(source, val)
+        ast.get_source_segment(source, name): ast.get_source_segment(source, val)
         for name, val in zip(args.kwonlyargs, args.kw_defaults)
         if val is not None
     }
@@ -138,11 +138,11 @@ def _get_call_signature(source: str):
     args = []
     for arg in call.args:
         if isinstance(arg, ast.Starred):
-            star_args = _ast_utils.get_source_segment(source, arg.value)
+            star_args = ast.get_source_segment(source, arg.value)
             continue
-        args.append(_ast_utils.get_source_segment(source, arg))
+        args.append(ast.get_source_segment(source, arg))
     kwargs = {
-        kw.arg: _ast_utils.get_source_segment(source, kw.value) for kw in call.keywords
+        kw.arg: ast.get_source_segment(source, kw.value) for kw in call.keywords
     }
     star_kwargs = kwargs.pop(None, None)
     return args, kwargs, star_args, star_kwargs
@@ -430,6 +430,11 @@ class ScopedName:
             f"ScopedName(name='{self.name}', scope={self.scope}, pos={self.pos}, "
             f"cell_no={self.cell_no})"
         )
+
+    def up(self):
+        self.scope = self.scope.up()
+        self.pos = None
+        self.cell_no = None
 
 
 class _SetAttribute(ast.NodeVisitor):  # TODO: use of this seems dubious

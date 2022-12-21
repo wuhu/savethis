@@ -22,6 +22,18 @@ from . import _ast_utils
 replace_cache = {}
 
 
+class InjectedSource:
+    def __init__(self):
+        self.src = '\n'
+
+    def inject(self, x):
+        self.src += x + '\n'
+
+
+injected = InjectedSource()
+inject = injected.inject
+
+
 def get_source(filename: str, use_replace_cache: bool = True) -> str:
     """Get source from *filename*.
 

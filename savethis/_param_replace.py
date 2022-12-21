@@ -1,7 +1,7 @@
 """Module enabling parameterising saved objects. """
 import ast
 
-from . import _dumper, _source_utils, _ast_utils, _finder
+from . import _dumper, _source_utils, _ast_utils, _finder, _scope
 
 
 def param(name, val, description=None, use_default=True):  # pylint: disable=unused-argument
@@ -53,7 +53,7 @@ def apply_params(source, parsed_kwargs, scope):
 
     for k, v in parsed_kwargs.items():
         if k in param_dicts:
-            code_graph_here = _dumper.CodeGraph().from_source(f'PARAM_{k} = {v}', scope, name=k)
+            code_graph_here = _dumper.CodeGraph().build_from_source(f'PARAM_{k} = {v}', scope, name=k)
             if len(code_graph_here) > 1:
                 code_graph.update(code_graph_here)
                 source = change_param(source, k, f'PARAM_{k}')
@@ -64,8 +64,8 @@ def apply_params(source, parsed_kwargs, scope):
             value_dict = parse_dict(v)
             repl = {}
             for sub_k, sub_v in value_dict.items():
-                code_graph_here = _dumper.CodeGraph().from_source(f'PARAM_{k}_{sub_k} = {sub_v}',
-                                                                  scope, name=k)
+                code_graph_here = _dumper.CodeGraph().build_from_source(f'PARAM_{k}_{sub_k} = {sub_v}',
+                                                                        scope, name=k)
                 if len(code_graph_here) > 1:
                     code_graph.update(code_graph_here)
                     repl[sub_k] = f'PARAM_{k}_{sub_k}'
@@ -114,12 +114,12 @@ def extract_param_s(source: str) -> dict:
     """
     res = {}
     for call in _dumper.Finder(ast.Call).find(ast.parse(source)):
-        if _ast_utils.get_source_segment(source, call.func) not in ('param', 'savethis.param'):
+        if ast.get_source_segment(source, call.func) not in ('param', 'savethis.param'):
             continue
         position = _ast_utils.get_position(source, call)
         call_source = _source_utils.cut(source, *position, one_indexed=True)
-        args, keys, _, _ = _finder._get_call_signature(call_source)
-        signature = _finder.Signature(argnames=['name', 'val', 'description', 'use_default'],
+        args, keys, _, _ = _scope._get_call_signature(call_source)
+        signature = _scope.Signature(argnames=['name', 'val', 'description', 'use_default'],
                                         defaults={'description': 'None', 'use_default': 'True'})
         assignments = signature.get_call_assignments(args, keys)
         if call.args:
@@ -157,12 +157,12 @@ def extract_params_s(source):
     """
     res = {}
     for call in _dumper.Finder(ast.Call).find(ast.parse(source)):
-        if _ast_utils.get_source_segment(source, call.func) not in ('params', 'savethis.params'):
+        if ast.get_source_segment(source, call.func) not in ('params', 'savethis.params'):
             continue
         position = _ast_utils.get_position(source, call)
         call_source = _source_utils.cut(source, *position, one_indexed=True)
-        args, keys, _, _ = _finder._get_call_signature(call_source)
-        signature = _finder.Signature(argnames=['name', 'use_defaults', 'allow_free'],
+        args, keys, _, _ = _scope._get_call_signature(call_source)
+        signature = _scope.Signature(argnames=['name', 'use_defaults', 'allow_free'],
                                         kwarg='kwargs',
                                         defaults={'use_defaults': 'True', 'allow_free': 'False'})
         assignments = signature.get_call_assignments(args, keys, dump_kwargs=False)
@@ -235,6 +235,6 @@ def parse_dict(source):
     """
     dict_node = ast.parse(source).body[0].value
     return {
-        _ast_utils.get_source_segment(source, k).strip("'\""): _ast_utils.get_source_segment(source, v)
+        ast.get_source_segment(source, k).strip("'\""): ast.get_source_segment(source, v)
         for k, v in zip(dict_node.keys, dict_node.values)
     }
