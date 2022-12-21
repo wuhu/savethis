@@ -9,6 +9,8 @@ define usecases
 
 think of file extension
 
+rename code -> src (?) code interferes with some module
+
 # tests
 
 # refactor
