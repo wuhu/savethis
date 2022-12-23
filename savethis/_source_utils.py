@@ -22,18 +22,6 @@ from . import _ast_utils
 replace_cache = {}
 
 
-class InjectedSource:
-    def __init__(self):
-        self.src = '\n'
-
-    def inject(self, x):
-        self.src += x + '\n'
-
-
-injected = InjectedSource()
-inject = injected.inject
-
-
 def get_source(filename: str, use_replace_cache: bool = True) -> str:
     """Get source from *filename*.
 
@@ -44,7 +32,7 @@ def get_source(filename: str, use_replace_cache: bool = True) -> str:
     explicit replacements of the original source strings.
     """
     # needed to support doctest
-    if filename.startswith('<doctest'):
+    if filename.startswith('<doctest'):  # pragma: no cover
         stack = inspect.stack()
         for frameinfo in stack:
             if frameinfo.filename == filename:
@@ -57,8 +45,8 @@ def get_source(filename: str, use_replace_cache: bool = True) -> str:
         # the ipython case
         return ''.join(linecache.cache[filename][2])
 
-    # normal module
-    with open(filename, encoding='utf-8') as f:
+    # normal file
+    with open(filename, encoding='utf-8') as f:  # pragma: no cover
         return f.read()
 
 
@@ -156,7 +144,7 @@ def cut(string: str, from_line: int, to_line: int, from_col: int, to_col: int,
         return _cut_string(string, from_line, to_line, from_col, to_col)
 
 
-def _ipython_history() -> List[str]:
+def _ipython_history() -> List[str]:  # pragma: no cover (no ipython within pytest)
     """Get the list of commands executed by IPython, ordered from oldest to newest. """
     return [
         replace_cache.get(k, ''.join(lines))
@@ -196,8 +184,28 @@ class ReplaceString(str):
         super().__init__()
 
     def cut(self, from_line: int, to_line: int, from_col: int, to_col: int):
-        """Cut and return the resulting sub-`ReplaceString`. """
+        """Cut and return the resulting sub-`ReplaceString`. 
+    
+        The positions are on the *original*, not the replaced string.
+        """
+
+        if self.from_line == from_line and self.from_col < from_col < self.to_col:
+            raise ValueError('Cutting within the repl not supported.')
+
+        if self.to_line == to_line and self.from_col < to_col < self.to_col:
+            raise ValueError('Cutting within the repl not supported.')
+
+        if self.to_line < from_line \
+                or self.from_line > to_line \
+                or self.to_line == from_line and self.to_col < from_col \
+                or self.from_line == to_line and self.from_col > to_col:
+            # repl outside cut
+            return ReplaceString(cut(self.original, from_line, to_line, from_col, to_col),
+                                 '', 0, 0, 0, 0)
+
         lines = self.original.split('\n')[from_line: to_line + 1]
+            
+        # add to to_col if difference
         if len(lines) == 1:
             lines[0] = lines[0][from_col:to_col]
         else:
@@ -207,21 +215,12 @@ class ReplaceString(str):
         new_from_line = self.from_line - from_line
         new_to_line = self.to_line - from_line
         if from_line == self.from_line:
-            new_from_col = self.from_col - from_col
+            new_from_col = max(self.from_col - from_col, 0)
         else:
             new_from_col = self.from_col
-        if to_line == self.to_line and to_col < self.to_col:
-            new_to_col = to_col
-        else:
-            new_to_col = self.to_col
+        new_to_col = self.to_col
         if self.to_line == from_line:
             new_to_col -= from_col
-
-        if new_from_line < 0:
-            new_from_col = 0
-        if new_to_line < 0:
-            new_from_col = 0
-            new_to_col = 0
 
         return ReplaceString('\n'.join(lines), self.repl, new_from_line, new_to_line, new_from_col,
                              new_to_col)

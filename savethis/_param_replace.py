@@ -53,7 +53,8 @@ def apply_params(source, parsed_kwargs, scope):
 
     for k, v in parsed_kwargs.items():
         if k in param_dicts:
-            code_graph_here = _dumper.CodeGraph().build_from_source(f'PARAM_{k} = {v}', scope, name=k)
+            code_graph_here = _dumper.CodeGraph().build_from_source(f'PARAM_{k} = {v}',
+                                                                    scope, name=f'PARAM_{k}')
             if len(code_graph_here) > 1:
                 code_graph.update(code_graph_here)
                 source = change_param(source, k, f'PARAM_{k}')
@@ -64,8 +65,9 @@ def apply_params(source, parsed_kwargs, scope):
             value_dict = parse_dict(v)
             repl = {}
             for sub_k, sub_v in value_dict.items():
-                code_graph_here = _dumper.CodeGraph().build_from_source(f'PARAM_{k}_{sub_k} = {sub_v}',
-                                                                        scope, name=k)
+                code_graph_here = \
+                    _dumper.CodeGraph().build_from_source(f'PARAM_{k}_{sub_k} = {sub_v}',
+                                                          scope, name=f'PARAM_{k}')
                 if len(code_graph_here) > 1:
                     code_graph.update(code_graph_here)
                     repl[sub_k] = f'PARAM_{k}_{sub_k}'
@@ -120,7 +122,7 @@ def extract_param_s(source: str) -> dict:
         call_source = _source_utils.cut(source, *position, one_indexed=True)
         args, keys, _, _ = _scope._get_call_signature(call_source)
         signature = _scope.Signature(argnames=['name', 'val', 'description', 'use_default'],
-                                        defaults={'description': 'None', 'use_default': 'True'})
+                                     defaults={'description': 'None', 'use_default': 'True'})
         assignments = signature.get_call_assignments(args, keys)
         if call.args:
             # value provided positionally
@@ -163,21 +165,30 @@ def extract_params_s(source):
         call_source = _source_utils.cut(source, *position, one_indexed=True)
         args, keys, _, _ = _scope._get_call_signature(call_source)
         signature = _scope.Signature(argnames=['name', 'use_defaults', 'allow_free'],
-                                        kwarg='kwargs',
-                                        defaults={'use_defaults': 'True', 'allow_free': 'False'})
+                                     kwarg='kwargs',
+                                     defaults={'use_defaults': 'True', 'allow_free': 'False'})
         assignments = signature.get_call_assignments(args, keys, dump_kwargs=False)
         if 'kwargs' not in assignments:
+            if not eval(assignments['allow_free']):
+                raise ValueError('If *allow_free* is False, you must provide keyword args.')
             assignments['kwargs'] = {}
         assignments['positions'] = {
             ke.arg: _ast_utils.get_position(source, ke.value)
             for ke in call.keywords
             if ke.arg not in ('name', 'use_defaults', 'allow_free')
         }
-        arg_end_lineno = max(pos.end_lineno for pos in assignments['positions'].values())
-        arg_end_col_offset = max(pos.end_col_offset for pos in assignments['positions'].values()
-                                 if pos.end_lineno == arg_end_lineno)
+        if assignments['positions']:
+            arg_end_lineno = max(pos.end_lineno for pos in assignments['positions'].values())
+            arg_end_col_offset = max(pos.end_col_offset for pos in assignments['positions'].values()
+                                     if pos.end_lineno == arg_end_lineno)
+        else:
+            all_positions = [_ast_utils.get_position(source, ke.value) 
+                             for ke in call.keywords]
+            arg_end_lineno = max(pos.end_lineno for pos in all_positions)
+            arg_end_col_offset = max(pos.end_col_offset for pos in all_positions 
+                                     if pos.end_lineno == arg_end_lineno)
         assignments['end_position'] = _ast_utils.Position(arg_end_lineno, arg_end_lineno,
-                                                         arg_end_col_offset, arg_end_col_offset)
+                                                          arg_end_col_offset, arg_end_col_offset)
         res[assignments['name'].strip("'\"")] = assignments
     return res
 
@@ -218,7 +229,7 @@ def change_params(source, param_name, **kwargs):
             if not eval(params_dict['allow_free']):
                 raise ValueError(f'You provided param "{param_name}.{k}" which doesn\'t exist.')
             source = _source_utils.replace(source, f', {k}={v}', *params_dict['end_position'],
-                                       one_indexed=True)
+                                           one_indexed=True)
     return source
 
 

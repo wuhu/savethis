@@ -6,8 +6,8 @@ from warnings import warn
 
 try:
     from importlib.metadata import version
-except ModuleNotFoundError:
-    from importlib_metadata import version
+except ModuleNotFoundError:  # pragma: no cover
+    from importlib_metadata import version  # for python versions without importlib.metadata
 from importlib_metadata import packages_distributions
 
 

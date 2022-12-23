@@ -10,7 +10,7 @@ def test_annassign():
     source = dedent('''
         a: int = 1
     ''')
-    scoped_name = _scope.ScopedName('a', None)
+    scoped_name = _scope.ScopedName('a', _scope.Scope.empty())
     code, node, name = _finder.find_scopedname_in_source(scoped_name, source)
     assert code == 'a: int = 1'
     assert isinstance(node, ast.AnnAssign)

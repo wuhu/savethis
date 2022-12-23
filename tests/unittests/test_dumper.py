@@ -6,7 +6,7 @@ from textwrap import dedent
 import pytest
 
 from savethis import _dumper
-from savethis._scope import ScopedName
+from savethis._scope import Scope, ScopedName
 
 
 SOURCE = dedent('''\
@@ -78,6 +78,54 @@ TARGET = dedent('''\
     ''')
 
 
+class Test_VarFinder:
+    def test_find(self):
+        src = dedent('''\
+            a = 1
+            b = c
+
+            def f():
+                c = 1
+                i = j''')
+        node = ast.parse(src)
+        vf = _dumper._VarFinder()
+        vars = vf.find(node)
+        assert set(x.name for x in vars.globals) == {'c', 'j'}
+        assert set(x.name for x in vars.locals) == {'a', 'b', 'f'}
+
+    def test_find_in_list(self):
+        src1 = dedent('''\
+            a = 1
+            b = c
+
+            def f():
+                c = 1
+                i = j''')
+        node1 = ast.parse(src1)
+        src2 = dedent('''\
+            d = e
+            class F:
+                ...''')
+        node2 = ast.parse(src2)
+        vf = _dumper._VarFinder()
+        vars = vf.find([node1, node2])
+        assert set(x.name for x in vars.globals) == {'c', 'j', 'e'}
+        assert set(x.name for x in vars.locals) == {'a', 'b', 'f', 'd', 'F'}
+
+    def test_find_in_function(self):
+        src = dedent('''\
+            def f(a, *args, **kwargs):
+                c = 1
+                b = a
+                i = j''')
+        node = ast.parse(src).body[0]
+        vf = _dumper._VarFinder()
+        vars = vf.find(node)
+        assert set(x.name for x in vars.globals) == {'j'}
+        assert set(x.name for x in vars.locals) == {'a', 'args', 'kwargs', 'i', 'c', 'b'}
+
+
+
 class TestFinder:
     def test_find_function_def_explicit(self):
         res = _dumper.Finder(ast.FunctionDef).find(ast.parse(SOURCE))
@@ -114,13 +162,13 @@ class TestFindGlobals:
         statement = 'a = run(a)'
         tree = ast.parse(statement)
         res = _dumper.find_globals(tree)
-        assert res == {ScopedName('a', None), ScopedName('run', None)}
+        assert res == {ScopedName('a', Scope.empty()), ScopedName('run', Scope.empty())}
 
     def test_find_in_assignment(self):
         statement = 'a = run'
         tree = ast.parse(statement)
         res = _dumper.find_globals(tree)
-        assert res == {ScopedName('run', None)}
+        assert res == {ScopedName('run', Scope.empty())}
 
     def test_dots(self):
         statement = (
@@ -130,7 +178,7 @@ class TestFindGlobals:
             '    return a.b.c(x)\n'
         )
         res = _dumper.find_globals(ast.parse(statement))
-        assert res == {ScopedName('a.b.c', None), ScopedName('y.x', None)}
+        assert res == {ScopedName('a.b.c', Scope.empty()), ScopedName('y.x', Scope.empty())}
 
     def test_attribute(self):
         statement = (
@@ -141,8 +189,8 @@ class TestFindGlobals:
             '    return a.b.c(x)\n'
         )
         res = _dumper.find_globals(ast.parse(statement))
-        assert res == {ScopedName('a.b.c', None), ScopedName('y.x', None),
-                       ScopedName('aa', None), ScopedName('bb', None)}
+        assert res == {ScopedName('a.b.c', Scope.empty()), ScopedName('y.x', Scope.empty()),
+                       ScopedName('aa', Scope.empty()), ScopedName('bb', Scope.empty())}
 
     def test_complex_statement_1(self):
         statement = (
@@ -151,7 +199,7 @@ class TestFindGlobals:
             '    (255 * (x * 0.5 + 0.5)).numpy().astype(numpy.uint8)\n'
         )
         res = _dumper.find_globals(ast.parse(statement))
-        assert res == {ScopedName('numpy.uint8', None), ScopedName('transform', None)}
+        assert res == {ScopedName('numpy.uint8', Scope.empty()), ScopedName('transform', Scope.empty())}
 
     def test_nested_function(self):
         statement = dedent('''\
@@ -160,7 +208,7 @@ class TestFindGlobals:
                     x = aaa
         ''')
         res = _dumper.find_globals(ast.parse(statement))
-        assert res == {ScopedName('aaa', None)}
+        assert res == {ScopedName('aaa', Scope.empty())}
 
     def test_nested_function_nonlocal(self):
         statement = dedent('''\
@@ -171,6 +219,21 @@ class TestFindGlobals:
         ''')
         res = _dumper.find_globals(ast.parse(statement))
         assert res == set()
+    
+    def test_subscript_does_not_make_it_local(self):
+        statement = dedent('''\
+            x[1] = 2
+        ''')
+        res = _dumper.find_globals(ast.parse(statement))
+        assert set(x.name for x in res) == {'x'}
+
+    def test_attribute_does_not_make_it_local(self):
+        statement = dedent('''\
+            x.a = 2
+        ''')
+        res = _dumper.find_globals(ast.parse(statement))
+        assert set(x.name for x in res) == {'x'}
+
 
 
 class TestRename:
@@ -301,14 +364,14 @@ class TestAddScopeAndPos:
 
     def test_add_scope(self):
         scope2 = _dumper.Scope.toplevel(ast)
-        vars = [_dumper.ScopedName('x')]
+        vars = [_dumper.ScopedName('x', Scope.empty())]
         name = _dumper.ScopedName('y', scope=scope2)
         _dumper.add_scope_and_pos(vars, name, ast.Name())
         assert [var.scope == scope2 for var in vars]
 
     def test_add_pos(self):
-        vars = [_dumper.ScopedName('x')]
-        name = _dumper.ScopedName('y', pos=(1, 1))
+        vars = [_dumper.ScopedName('x', Scope.empty())]
+        name = _dumper.ScopedName('y', Scope.empty(), pos=(1, 1))
         _dumper.add_scope_and_pos(vars, name, ast.Name())
         assert [var.pos == (1, 1) for var in vars]
 
@@ -426,13 +489,13 @@ class Test_MethodFinder:
 
 class Test_FilterBuiltins:
     def test_works(self):
-        names = [_dumper.ScopedName(x) for x in builtins.__dict__.keys()]
-        names.insert(0, _dumper.ScopedName('bla'))
-        names.insert(3, _dumper.ScopedName('ble'))
-        names.insert(12, _dumper.ScopedName('bli'))
-        names.insert(22, _dumper.ScopedName('blo'))
-        names.append(_dumper.ScopedName('blu'))
-        assert _dumper._filter_builtins(names) == {_dumper.ScopedName(x)
+        names = [_dumper.ScopedName(x, Scope.empty()) for x in builtins.__dict__.keys()]
+        names.insert(0, _dumper.ScopedName('bla', Scope.empty()))
+        names.insert(3, _dumper.ScopedName('ble', Scope.empty()))
+        names.insert(12, _dumper.ScopedName('bli', Scope.empty()))
+        names.insert(22, _dumper.ScopedName('blo', Scope.empty()))
+        names.append(_dumper.ScopedName('blu', Scope.empty()))
+        assert _dumper._filter_builtins(names) == {_dumper.ScopedName(x, Scope.empty())
                                                    for x in {'bla', 'ble', 'bli', 'blo', 'blu'}}
 
 

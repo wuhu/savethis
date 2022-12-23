@@ -22,17 +22,17 @@ class Signature:
 
     def remove_fist(self):
         '''Remove the fist positional argument. '''
-        if self.argnames:
-            return self.argnames.pop(0)
-        return self.pos_only_argnames.pop(0)
+        if self.pos_only_argnames:
+            return self.pos_only_argnames.pop(0)
+        return self.argnames.pop(0)
 
     @property
     def all_argnames(self):
         """A list of all argument names (including pos_only). """
         return self.pos_only_argnames + self.argnames
 
-    def get_call_assignments(self, pos_args, keyword_args, star_args=None, star_kwargs=None,
-                             dump_kwargs=True, ignore_extra_kwargs=False):
+    def get_call_assignments(self, pos_args: list, keyword_args: dict, star_args: list = None, 
+                             star_kwargs: dict = None, dump_kwargs: bool = True):
         """Given a call signature, return the assignmentes to this function signature.
 
         :param pos_args: Positional args.
@@ -40,8 +40,6 @@ class Signature:
         :param star_args: Value of *args.
         :param star_kwargs: Value of **kwargs.
         :param dump_kwargs: If *True*, return kwargs as a dumped string, else as a dict.
-        :param ignore_extra_kwargs: If *True*, ignore extra keyword arguments, else raise an
-            exception.
         """
         res = {}
         for name, val in self.kwonly_defaults.items():
@@ -50,17 +48,25 @@ class Signature:
             except KeyError:
                 res[name] = val
 
+        if star_args is not None:
+            pos_args += star_args
+
         for name, val in zip(self.all_argnames, pos_args):
             res[name] = val
+        
+        if not self.vararg and len(pos_args) > len(self.all_argnames):
+            raise ValueError('Too many positional arguments provided.')
 
         if self.vararg is not None:
-            res[self.vararg] = '[' + ', '.join(pos_args[len(self.all_argnames):]) + ']'
+            res[self.vararg] = '[' + ', '.join(f'{x}' for x in pos_args[len(self.all_argnames):]) + ']'
 
         kwargs = {}
         for name, val in keyword_args.items():
             if name in res:
                 continue
-            if name in self.argnames:
+            if name in self.pos_only_argnames:
+                raise ValueError(f'"{name}" is a pos only argument, cannot be provided by keyword.')
+            if name in self.all_argnames:
                 res[name] = val
             else:
                 kwargs[name] = val
@@ -85,12 +91,10 @@ class Signature:
 
 
 def _parse_def_args(args, source):
+    """Parse the args of a function-ast-node and return a corresponding Signature object. """
     argnames = [x.arg for x in args.args]
 
-    try:
-        pos_only_argnames = [x.arg for x in args.posonlyargs]
-    except AttributeError:
-        pos_only_argnames = []
+    pos_only_argnames = [x.arg for x in args.posonlyargs]
 
     defaults = {
         name: ast.get_source_segment(source, val)
@@ -132,8 +136,6 @@ def _get_call_signature(source: str):
     (['2', 'b', "'f'"], {'c': '100'}, '[1, 2]', 'kwargs')
     """
     call = ast.parse(source).body[0].value
-    if not isinstance(call, ast.Call):
-        return [], {}
     star_args = None
     args = []
     for arg in call.args:
@@ -186,19 +188,19 @@ class Scope:
         """Create a top-level scope (i.e. module level, no nesting). """
         if isinstance(module, str):
             module = sys.modules[module]
+        source = _source_utils.get_module_source(module)
+        ''' TODO: this really needed ->? looks dirty
         try:
             source = _source_utils.get_module_source(module)
         except TypeError:
             source = ''
+        '''
         return cls(module, source, [])
 
     @classmethod
     def empty(cls):
         """Create the empty scope (a scope with no module and no nesting). """
         return cls(None, '', [])
-
-    def __deepcopy__(self, memo):
-        return Scope(self.module, self.def_source, self.scopelist, self.id_)
 
     @classmethod
     def from_source(cls, def_source, lineno, call_source, module=None, drop_n=0,
@@ -233,7 +235,8 @@ class Scope:
                     x.full_name = x.name
             previous = x
 
-        if drop_n > 0:
+        if drop_n > 0:  # pragma: no cover (potentially remove)
+            raise AssertionError('we need this')  # TODO: do we need this?
             function_defs = function_defs[:-drop_n]
 
         if not function_defs:
@@ -288,21 +291,17 @@ class Scope:
         # add call assignments to inner scope
         scopelist[0][1].body = call_assignments + scopelist[0][1].body
 
-        id_ = str((frame.f_code.co_filename, locs))
+        if frame is not None:  # pragma: no cover (potentially remove)
+            # TODO: do we need this?
+            id_ = str((frame.f_code.co_filename, locs))
+        else:
+            id_ = None
 
         return cls(module, def_source, scopelist, id_)
-
-    def from_level(self, i: int) -> 'Scope':
-        """Return a new scope starting at level *i* of the scope hierarchy. """
-        return type(self)(self.module, self.def_source, self.scopelist[i:])
 
     def up(self) -> 'Scope':
         """Return a new scope one level up in the scope hierarchy. """
         return type(self)(self.module, self.def_source, self.scopelist[1:])
-
-    def global_(self) -> 'Scope':
-        """Return the global scope surrounding *self*. """
-        return type(self)(self.module, self.def_source, [])
 
     def is_global(self) -> bool:
         """*True* iff the scope is global. """
@@ -328,8 +327,8 @@ class Scope:
     def index(self):
         return sorted(self._counts[self.dot_string()]).index(self.id_)
 
-    def _formatted_index(self):
-        index = self.index()
+    def _formatted_index(self):  # pragma: no cover is this needed?
+        index = self.index()  # TODO: check if needed
         if index == 0:
             return ''
         return f'_{self.index()}'
@@ -351,6 +350,9 @@ class Scope:
 
     def d_name(self, name, pos=None, cell_no=None):
         return ScopedName(name, self, pos, cell_no)
+    
+    def __deepcopy__(self, memo):
+        return Scope(self.module, self.def_source, self.scopelist, self.id_)
 
 
 class ScopedName:
@@ -383,10 +385,9 @@ class ScopedName:
     :param cell_no: (optional) Maximum ipython cell number.
     """
 
-    def __init__(self, name, scope=None, pos=None, cell_no=None):
+    def __init__(self, name, scope, pos=None, cell_no=None):
         self.name = name
-        if scope is None:
-            scope = Scope.empty()
+        assert scope is not None, 'used to be empty automatically, refactor this: empty scope should be passed explicitly'
         self.scope = scope
         self.pos = pos
         self.cell_no = cell_no
@@ -417,10 +418,6 @@ class ScopedName:
         for ind, split in enumerate(splits):
             out.append('.'.join(splits[:ind] + [split]))
         return out
-
-    def update_scope(self, new_scope):
-        self.scope = new_scope
-        return self
 
     def copy(self):
         return ScopedName(self.name, self.scope, self.pos, self.cell_no)

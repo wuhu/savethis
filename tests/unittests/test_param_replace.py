@@ -1,7 +1,11 @@
 from textwrap import dedent
+import pytest
 
 from savethis import _param_replace
+from savethis import _scope
 from savethis._ast_utils import Position
+
+from tests.material import param_replace_variables
 
 
 class TestParam:
@@ -14,7 +18,115 @@ class TestParams:
         assert {'a': 1, 'b': 2, 'c': 3} == _param_replace.params('a', a=1, b=2, c=3)
 
 
-class TestExtra_param_replaceParamS:
+class TestApplyParams:
+    def test_simple(self):
+        s = dedent('''
+            a = param('a', "1"); c = param('c', 1, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        replaced = dedent('''
+            a = param('a', '3'); c = param('c', 100, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        out = _param_replace.apply_params(s, {'a': "'3'", 'c': "100"}, _scope.Scope.empty())
+        assert replaced == out
+
+    def test_with_variable_dependency(self):
+        s = dedent('''
+            a = param('a', "1"); c = param('c', 1, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        replaced = dedent('''\
+            a = 123
+            PARAM_a = a
+            a = param('a', PARAM_a); c = param('c', 100, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        scope = _scope.Scope.toplevel(param_replace_variables)
+        out = _param_replace.apply_params(s, {'a': "a", 'c': "100"}, scope)
+        assert replaced == out
+
+    def test_with_variable_dependency_in_params(self):
+        s = dedent('''
+            a = params('a', x="1", y="2"); c = params('c', z=3)
+            def x():
+                b = params('bb', x=123)
+        ''')
+        replaced = dedent('''\
+            b = 1000
+            PARAM_a_x = b
+            a = params('a', x=PARAM_a_x, y='4'); c = params('c', z=100)
+            def x():
+                b = params('bb', x=123)
+        ''')
+        scope = _scope.Scope.toplevel(param_replace_variables)
+        out = _param_replace.apply_params(s, {'a': "{'x': b, 'y': '4'}", 'c': "{'z': 100}"},
+                                          scope)
+        assert replaced == out
+
+    def test_use_default(self):
+        s = dedent('''
+            a = param('a', "1"); c = param('c', 1, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        replaced = dedent('''
+            a = param('a', "1"); c = param('c', 100, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        out = _param_replace.apply_params(s, {'c': "100"}, _scope.Scope.empty())
+        assert replaced == out
+
+    def test_with_params(self):
+        s = dedent('''
+            a = params('a', x="1", y="2"); c = params('c', z=3)
+            def x():
+                b = params('bb', x=123)
+        ''')
+        replaced = dedent('''
+            a = params('a', x='3', y='4'); c = params('c', z=100)
+            def x():
+                b = params('bb', x=123)
+        ''')
+        out = _param_replace.apply_params(s, {'a': "{'x': '3', 'y': '4'}", 'c': "{'z': 100}"},
+                                          _scope.Scope.empty())
+        assert out == replaced
+
+    def test_missing_mandatory_value_in_params_raises(self):
+        s = dedent('''
+            a = params('a', x="1", y="2", use_defaults=False); c = params('c', z=3)
+            def x():
+                b = params('bb', x=123)
+        ''')
+        with pytest.raises(ValueError):
+            out = _param_replace.apply_params(s, {'a': "{'x': '3'}", 'c': "{'z': 100}"},
+                                              _scope.Scope.empty())
+
+    def test_missing_mandatory_value_in_param_raises(self):
+        s = dedent('''
+            a = param('a', "1"); c = param('c', 1, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        with pytest.raises(ValueError):
+            _param_replace.apply_params(s, {}, _scope.Scope.empty())
+
+    def test_extra_parameter_raises(self):
+        s = dedent('''
+            a = param('a', "1"); c = param('c', 1, 'hello', False)
+            def x():
+                b = param('bb', x)
+        ''')
+        with pytest.raises(ValueError):
+            _param_replace.apply_params(s, {'z': 123}, _scope.Scope.empty())
+
+
+class TestExtractParamS:
     def test_multiple(self):
         s = dedent('''
             a = param('a', "1"); c = param('c', 1, 'hello', False)
@@ -110,7 +222,7 @@ class TestExtra_param_replaceParamS:
         assert 'x' in p
 
 
-class TestExtra_param_replaceParamsS:
+class TestExtractParamsS:
     def test_defaults_are_filled_in(self):
         s = 'params("a", x=1)'
         p = _param_replace.extract_params_s(s)
@@ -123,7 +235,24 @@ class TestExtra_param_replaceParamsS:
             'end_position': Position(lineno=1, end_lineno=1, col_offset=15, end_col_offset=15)
         }
 
-    def test_defaults_can_be_overridded(self):
+    def test_without_kwargs(self):
+        s = 'params("a", allow_free=True)'
+        p = _param_replace.extract_params_s(s)
+        assert p['a'] == {
+            'name': '"a"',
+            'kwargs': {},
+            'use_defaults': 'True',
+            'allow_free': 'True',
+            'positions': {},
+            'end_position': Position(lineno=1, end_lineno=1, col_offset=27, end_col_offset=27)
+        }
+
+    def test_without_kwargs_and_without_allow_free_raises(self):
+        s = 'params("a", allow_free=False)'
+        with pytest.raises(ValueError):
+            _param_replace.extract_params_s(s)
+
+    def test_defaults_can_be_overridden(self):
         s = 'params("a", x=1, use_defaults=False, allow_free=True)'
         p = _param_replace.extract_params_s(s)
         assert p['a'] == {
@@ -230,6 +359,10 @@ class TestChangeParams:
         s = 'savethis.params("x", x=1)'
         assert _param_replace.change_params(s, 'x', x='100') == 'savethis.params("x", x=100)'
 
+    def test_allow_free_works(self):
+        s = 'savethis.params("x", x=1, allow_free=True)'
+        assert _param_replace.change_params(s, 'x', x='100', y='1000') == 'savethis.params("x", x=100, y=1000, allow_free=True)'
+
     def test_multiple(self):
         s = 'savethis.params("x", x=1, y=2, z=3)'
         assert _param_replace.change_params(s, 'x', x='100', z='1000') == 'savethis.params("x", x=100, y=2, z=1000)'
@@ -237,6 +370,10 @@ class TestChangeParams:
     def test_other_arguments_stay(self):
         s = 'params("x", x=1, use_defaults=True, allow_free=False)'
         assert _param_replace.change_params(s, 'x', x='100') == 'params("x", x=100, use_defaults=True, allow_free=False)'
+    def test_providing_extra_args_without_allow_free_raises(self):
+        s = 'params("x", x=1, allow_free=False)'
+        with pytest.raises(ValueError):
+            _param_replace.change_params(s, 'x', x='100', y=123)
 
     def test_weird_formatting_works(self):
         s = dedent('''

@@ -5,10 +5,7 @@ import dis
 import inspect
 import sys
 import types
-try:  # TODO: remove this when dropping python 3.7 support
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
+from typing import Literal
 from typing import Callable, Optional
 try:
     from pydevd_tracing import SetTrace

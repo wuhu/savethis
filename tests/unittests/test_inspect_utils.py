@@ -5,6 +5,8 @@ import sys
 from savethis import _inspect_utils, _ast_utils
 from savethis._source_utils import get_source
 
+from tests.material import inspect_utils
+
 
 toplevel_callinfo = _inspect_utils.CallInfo('here')
 toplevel_frame = inspect.currentframe()
@@ -46,6 +48,46 @@ class TestCallInfo:
         with pytest.raises(AssertionError):
             double_nested_builder()
 
+    def test_nextmodule(self):
+        nextmodule_callinfo = inspect_utils.call_info_nextmodule()
+        here_callinfo = inspect_utils.call_info_here()
+        assert nextmodule_callinfo.scope == \
+            'Scope[tests.unittests.test_inspect_utils.TestCallInfo::test_nextmodule]'
+        assert here_callinfo.scope == \
+            'Scope[tests.material.inspect_utils.call_info_here]'
+
+    def test_pass_frameinfo(self):
+        callinfo = _inspect_utils.CallInfo(inspect.stack()[0])
+        assert callinfo.scope == \
+            'Scope[tests.unittests.test_inspect_utils.TestCallInfo::test_pass_frameinfo]'
+
+
+def parent_frame_a():
+    return parent_frame_c()
+
+
+def parent_frame_b():
+    __SKIP_THIS_FRAME = True
+    return parent_frame_c()
+
+
+def parent_frame_c():
+    return inspect.stack()[0].frame
+
+
+class Test_ParentFrame:
+    def test_simple_1(self):
+        frame = _inspect_utils._parent_frame(parent_frame_c())
+        assert frame.f_code.co_name == 'test_simple_1'
+
+    def test_simple_2(self):
+        frame = _inspect_utils._parent_frame(parent_frame_a())
+        assert frame.f_code.co_name == 'parent_frame_a'
+
+    def test_skip(self):
+        frame = _inspect_utils._parent_frame(parent_frame_b())
+        assert frame.f_code.co_name == 'test_skip'
+
 
 class Test_GetScopeFromFrame:
     def test_toplevel(self):
@@ -77,7 +119,7 @@ class Test_GetScopeFromFrame:
         outer_scope = chain_scope.scopelist[0][1].body[0].value._scope
         assert outer_scope == \
             'Scope[tests.unittests.test_inspect_utils.Test_GetScopeFromFrame::test_chain_nested]'
-        assign = outer_scope.scopelist[0][1].body[0]
+        assign = outer_scope.scopelist[0][1].body[1]
         assert _ast_utils.unparse(assign).strip() == 'e = 1'
         assign = chain_scope.scopelist[0][1].body[0]
         assert _ast_utils.unparse(assign).strip() == 'x = e'
@@ -226,3 +268,9 @@ class TestCallerFrame:
     def test_here(self):
         from tests.material import outer_caller
         assert outer_caller.caller_frame().f_code.co_filename == __file__
+
+
+class TestGetArgumentAssignments:
+    def test_one(self):
+        assignments = inspect_utils.arg_assignments(1, b=2, c=123)
+        assert assignments == {'a': '1', 'b': '2', 'c': '123'}
