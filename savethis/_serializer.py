@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 from types import ModuleType
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
 
 from . import _inspect_utils, _source_utils, _dumper
 from ._dumper import CodeNode, CodeGraph
@@ -28,23 +28,26 @@ class Serializer:
             self.store.append(self)
 
     def save(self, path: Path):
+        """Store the serialized object to *path*. """
         raise NotImplementedError
 
     @classmethod
-    def save_all(cls, codegraph, path):
-        """Save all values. """
+    def save_all(cls, codegraph: CodeGraph, path: Union[Path, str]):  # pragma: no cover
+        """Save all serialized values that are being used in *codegraph* to *path*. """
         for codenode in list(codegraph.values()):
             for serializer in cls.store:
                 if serializer.varname in codenode.source:
                     loader_graph = serializer.save(path)
                     codegraph.update(loader_graph)
 
-    def complete_path(self, filename):
-        if isinstance(filename, (str, Path)):
-            return f"pathlib.Path(__file__).parent / '{filename}'"
-        elif isinstance(filename, Iterable):
+    def complete_path(self, filename_or_list: Union[Path, str, list]):
+        """Return a string representing the path of *filename_or_list* in the target
+        python file. """
+        if isinstance(filename_or_list, (str, Path)):
+            return f"pathlib.Path(__file__).parent / '{filename_or_list}'"
+        elif isinstance(filename_or_list, Iterable):
             return ('[pathlib.Path(__file__).parent / filename for filename in ['
-                    + ', '.join(f"'{fn}'" for fn in filename)
+                    + ', '.join(f"'{fn}'" for fn in filename_or_list)
                     + ']]')
         else:
             raise ValueError('The save function must return a filename, a list of filenames or '
@@ -64,7 +67,10 @@ class SimpleSerializer(Serializer):
 
     :param val: The value to serialize.
     :param save_function: The function to use for saving *val*.
+        Must accept arguments *val* and *path* and store the object *val* to *path*.
+        Can return a filename or a list of filenames of the stored files.
     :param load_function: The function to use for loading *val*.
+        Must accept an argument *path* and return the object loaded from there.
     :param file_suffix: If set, a string that will be appended to the path.
     :param module: The module the serializer functions are defined in. Optional, default is to
         use the calling module.
@@ -111,7 +117,7 @@ class SimpleSerializer(Serializer):
         return code_graph
 
 
-class NullSerializer(Serializer):
+class NullSerializer(Serializer):  # TODO: evaluable_repr and scope in here seems dubious
     """A Serializer that does nothing. """
     def __init__(self, val, *, evaluable_repr, scope, varname=None, store=True, **_):
         super().__init__(varname, store)
@@ -123,9 +129,10 @@ class NullSerializer(Serializer):
 
 
 def _serialize(val, serializer=None):
-    if serializer is not None:
-        return Serializer(val, *serializer).varname
+    if serializer is not None:  # TODO: add support for serializer object
+        return SimpleSerializer(val, *serializer).varname
     if hasattr(val, '__len__') and len(val) > 10:
+        from . import serializers
         return serializers.json_serializer(val).varname
     return repr(val)
 

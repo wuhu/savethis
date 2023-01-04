@@ -72,7 +72,7 @@ def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: boo
     # build codegraph
     evaluable_repr = _inspect_utils.get_argument_assignments(['obj'])['obj']
     scope = _inspect_utils.CallInfo().scope
-    codegraph = serializer(obj, varname='__savethis', evaluable_repr=evaluable_repr, 
+    codegraph = serializer(obj, varname='__savethis', evaluable_repr=evaluable_repr,
                            scope=scope, store=False).save(path)
     _serializer.Serializer.save_all(codegraph, path)
 
