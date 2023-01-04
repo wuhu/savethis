@@ -1,24 +1,28 @@
 import importlib
-import inspect
 import os
 from pathlib import Path
-import pickle as pickle_
-import re
 from shutil import copytree, rmtree
 from tempfile import TemporaryDirectory
 import types
-from typing import Union, Set, Optional
+from typing import Union, Optional
 import zipfile
 
-from . import _inspect_utils
-from . import _finder, _dumper, _package_utils, _scope, _param_replace, _serializer
-from ._dumper import CodeNode, find_codenode, CodeGraph
-from ._scope import Scope, ScopedName
+from . import _inspect_utils, _package_utils, _scope, _param_replace, _serializer
+from ._dumper import CodeGraph
 from . import serializers
 
 
 def build_codegraph(obj, name=None):
-    evaluable_repr = get_argument_assignments(['obj'])['obj']
+    """Build a code graph for the given object.
+    
+    A code graph represents the dependencies and code needed to recreate the object.
+    
+    :param obj: The object to build the code graph for.
+    :param name: The name to give the object in the code graph. If not provided, a name will
+        be generated automatically.
+    :return: The code graph for the object.
+    """
+    evaluable_repr = _inspect_utils.get_argument_assignments(['obj'])['obj']
     call_info = _inspect_utils.CallInfo()
     scope = call_info.scope
     code_graph = CodeGraph()
@@ -26,14 +30,19 @@ def build_codegraph(obj, name=None):
     return code_graph.build(globals_)
 
 
-def dumps(obj):
+def dumps(obj) -> str:
+    """Convert the object to python code that would recreate it.
+    
+    :param obj: The object.
+    :return: The python code as a string.
+    """
     return build_codegraph(obj).dumps()
 
 
 def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: bool = False,
          strict_requirements: bool = False,
          serializer: _serializer.Serializer = serializers.NullSerializer):  # TODO: compress
-    """Save the transform to a folder at *path*.
+    """Save *obj* to a folder at *path*.
 
     The folder's name should end with '.padl'. If no extension is given, it will be added
     automatically.
@@ -42,9 +51,9 @@ def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: boo
     will raise a FileExistsError.
 
     :param obj: The object to be saved.
-    :param path: The path to save the transform at.
+    :param path: The path to save the object at.
     :param pickle: If *True*, pickle *obj*.
-    :param force_overwrite: If *True*, overwrite any existing saved transform at *path*.
+    :param force_overwrite: If *True*, overwrite any existing saved object at *path*.
     :param strict_requirements: If *True*, fail if any of the Transform's requirements cannot
         be found. If *False* print a warning if that's the case.
     :param serializer: TODO
@@ -70,7 +79,7 @@ def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: boo
     path.mkdir(exist_ok=True)
 
     # build codegraph
-    evaluable_repr = _inspect_utils.get_argument_assignments(['obj'])['obj']
+    evaluable_repr = _inspect_utils.get_argument_assignments(['obj'], vararg='vararg')['obj']
     scope = _inspect_utils.CallInfo().scope
     codegraph = serializer(obj, varname='__savethis', evaluable_repr=evaluable_repr,
                            scope=scope, store=False).save(path)
@@ -81,7 +90,7 @@ def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: boo
         requirements = _package_utils.dump_requirements(
                 (node.ast_node for node in codegraph.values()),
                 strict=strict_requirements)
-    except _package_utils.RequirementNotFound as exc:
+    except _package_utils.RequirementNotFound as exc:  # pragma: no cover
         raise _package_utils.RequirementNotFound(
                 f'Could not find an installed version of '
                 f'"{exc.package}", which the object you\'re saving depends on. '
@@ -92,14 +101,14 @@ def save(obj, path: Union[Path, str], pickle: bool = False, force_overwrite: boo
     code = codegraph.dumps()
 
     # save
-    with open(path / 'code.py', 'w', encoding='utf-8') as f:
+    with open(path / 'src.py', 'w', encoding='utf-8') as f:
         f.write(code)
     with open(path / 'requirements.txt', 'w', encoding='utf-8') as f:
         f.write(requirements)
 
 
 def _zip_load(path: Union[Path, str]):
-    """Load a transform from a compressed '.padl' file. """
+    """Load an object from a compressed '.padl' file. """
     # we can't use TemporaryDirectory with a context because the files need to exist when
     # using / saving again
     dirname = TemporaryDirectory('.padl').name
@@ -109,7 +118,7 @@ def _zip_load(path: Union[Path, str]):
 
 
 def load(path, **kwargs):
-    """Load a transform (as saved with padl.save) from *path*.
+    """Load an object (as saved with padl.save) from *path*.
 
     Use keyword arguments to override params (see :func:`padl.param`).
     """
@@ -125,7 +134,7 @@ def load_noparse(path, parsed_kwargs):
         return _zip_load(path)
     path = Path(path)
 
-    with open(path / 'transform.py', encoding='utf-8') as f:
+    with open(path / 'src.py', encoding='utf-8') as f:
         source = f.read()
 
     scope = _inspect_utils._get_scope_from_frame(_inspect_utils.caller_frame(), 0)
@@ -135,7 +144,7 @@ def load_noparse(path, parsed_kwargs):
         def create_module(self, spec):
             return types.ModuleType(spec.name)
 
-    module_name = str(path).replace('/', os.path.sep).lstrip('.') + '.transform'
+    module_name = str(path).replace('/', os.path.sep).lstrip('.') + '.source'
     spec = importlib.machinery.ModuleSpec(module_name, _EmptyLoader())
     module = importlib.util.module_from_spec(spec)
 
@@ -148,12 +157,12 @@ def load_noparse(path, parsed_kwargs):
 
     if parsed_kwargs:
         tempdir = TemporaryDirectory()
-        module_path = Path(tempdir.name) / 'code.py'
+        module_path = Path(tempdir.name) / 'src.py'
         with open(module_path, 'w', encoding='utf-8') as f:
             f.write(source)
         module.__dict__['_pd_tempdir'] = tempdir
     else:
-        module_path = path / 'code.py'
+        module_path = path / 'src.py'
 
     module.__dict__['__file__'] = str(module_path)
 

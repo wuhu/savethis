@@ -372,13 +372,15 @@ def find_in_scope(scoped_name: ScopedName):
         except NameNotFound:
             searched_name.up()
             continue
-    if searched_name.scope.module is not None:
-        try:
-            return find_scopedname(searched_name)
-        except NameNotFound:
-            pass
-    searched_name.scope = Scope.empty()
-    return find_scopedname_in_source(searched_name, _source_utils.injected.src)
+
+    if searched_name.scope.module is None:
+        raise NameNotFound(format_scoped_name_not_found(scoped_name))
+
+    try:
+        return find_scopedname(searched_name)
+    except NameNotFound as exc:
+        raise NameNotFound(format_scoped_name_not_found(scoped_name)) from exc
+
 
 
 def replace_star_imports(tree: ast.Module):
